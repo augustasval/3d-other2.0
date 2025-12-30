@@ -7,14 +7,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/runpod-volume/models
 
-# Install only what's missing from base image
+# Install dependencies
 RUN pip install --no-cache-dir \
+    "numpy<2.0" \
     runpod \
     onnxruntime-gpu \
     rembg \
     trimesh \
     pygltflib \
-    PyMCubes
+    PyMCubes \
+    diffusers \
+    transformers \
+    accelerate \
+    safetensors
 
 WORKDIR /app
 
