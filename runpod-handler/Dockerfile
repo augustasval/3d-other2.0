@@ -54,7 +54,8 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir PyMCubes
 
 # Copy application code (simplified handler is self-contained)
-COPY handler.py /app/handler.py
+# Path is relative to repo root since RunPod builds from there
+COPY runpod-handler/handler.py /app/handler.py
 
 # Create model cache directory
 RUN mkdir -p /runpod-volume/models
