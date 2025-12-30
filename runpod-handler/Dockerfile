@@ -53,10 +53,8 @@ RUN pip install --no-cache-dir \
 # Install PyMCubes (correct package name)
 RUN pip install --no-cache-dir PyMCubes
 
-# Copy application code
+# Copy application code (simplified handler is self-contained)
 COPY handler.py /app/handler.py
-COPY models/ /app/models/
-COPY utils/ /app/utils/
 
 # Create model cache directory
 RUN mkdir -p /runpod-volume/models
