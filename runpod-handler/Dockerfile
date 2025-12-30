@@ -10,6 +10,7 @@ ENV HF_HOME=/runpod-volume/models
 # Install only what's missing from base image
 RUN pip install --no-cache-dir \
     runpod \
+    onnxruntime-gpu \
     rembg \
     trimesh \
     pygltflib \
