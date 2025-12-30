@@ -1,0 +1,54 @@
+# High-Quality 2D-to-3D Pipeline Dependencies
+# For RunPod Serverless with A40 (48GB) GPU
+
+# Core ML frameworks (PyTorch installed separately in Dockerfile)
+numpy>=1.24.0,<2.0.0
+scipy>=1.11.0
+pillow>=10.0.0
+scikit-image>=0.21.0
+
+# HuggingFace ecosystem
+transformers>=4.38.0
+diffusers>=0.27.0
+accelerate>=0.27.0
+safetensors>=0.4.0
+huggingface-hub>=0.21.0
+tokenizers>=0.15.0
+
+# Background removal
+rembg>=2.0.50
+onnxruntime-gpu>=1.17.0
+
+# 3D processing
+trimesh>=4.0.0
+pygltflib>=1.16.0
+open3d>=0.18.0
+xatlas>=0.0.9
+mcubes>=0.1.0
+
+# Mesh processing (optional but recommended)
+# pymeshlab>=2023.12  # Heavy dependency, installed in Dockerfile
+
+# Image processing
+opencv-python-headless>=4.8.0
+imageio>=2.34.0
+
+# RunPod SDK
+runpod>=1.6.0
+
+# Utilities
+tqdm>=4.66.0
+einops>=0.7.0
+omegaconf>=2.3.0
+pyyaml>=6.0.0
+requests>=2.31.0
+
+# Memory optimization
+xformers>=0.0.24
+
+# Optional: Draco compression
+# DracoPy>=1.4.0  # Uncomment if Draco compression needed
+
+# Development/debugging (optional)
+# ipython>=8.0.0
+# rich>=13.0.0
