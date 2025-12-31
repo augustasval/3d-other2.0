@@ -16,10 +16,11 @@ RUN pip install --no-cache-dir \
     trimesh \
     pygltflib \
     PyMCubes \
-    diffusers \
     transformers \
-    accelerate \
-    safetensors
+    huggingface_hub
+
+# Install TripoSR from GitHub
+RUN pip install git+https://github.com/VAST-AI-Research/TripoSR.git
 
 WORKDIR /app
 

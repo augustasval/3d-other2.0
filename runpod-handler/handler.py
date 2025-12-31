@@ -71,37 +71,34 @@ def remove_background(image: Image.Image) -> Image.Image:
     return result
 
 
-def load_hunyuan3d():
-    """Load Hunyuan3D-2 model."""
+def load_triposr():
+    """Load TripoSR model for 3D generation."""
     global _models
 
-    if "hunyuan3d" not in _models:
-        logger.info("Loading Hunyuan3D-2 model...")
+    if "triposr" not in _models:
+        logger.info("Loading TripoSR model...")
 
         try:
-            # Try importing Hunyuan3D
-            # This assumes the model is available via HuggingFace
-            from diffusers import DiffusionPipeline
             import torch
+            from tsr.system import TSR
 
-            model_id = "tencent/Hunyuan3D-2"
-
-            pipe = DiffusionPipeline.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16,
-                trust_remote_code=True,
+            model = TSR.from_pretrained(
+                "stabilityai/TripoSR",
+                config_name="config.yaml",
+                weight_name="model.ckpt",
             )
-            pipe = pipe.to("cuda")
+            model.renderer.set_chunk_size(8192)
+            model.to("cuda")
 
-            _models["hunyuan3d"] = pipe
-            logger.info("Hunyuan3D-2 loaded successfully")
+            _models["triposr"] = model
+            logger.info("TripoSR loaded successfully")
 
         except Exception as e:
-            logger.error(f"Failed to load Hunyuan3D-2: {e}")
+            logger.error(f"Failed to load TripoSR: {e}")
             logger.info("Falling back to placeholder mode")
-            _models["hunyuan3d"] = None
+            _models["triposr"] = None
 
-    return _models.get("hunyuan3d")
+    return _models.get("triposr")
 
 
 def generate_3d_model(
@@ -128,53 +125,47 @@ def generate_3d_model(
 
     # Step 2: Load model
     start = time.time()
-    pipe = load_hunyuan3d()
+    model = load_triposr()
     timings["model_loading"] = time.time() - start
 
-    if pipe is None:
-        # Fallback: return a placeholder response
-        # This allows testing the infrastructure without the actual model
+    if model is None:
         logger.warning("Model not available, returning placeholder")
         return {
             "success": False,
-            "error": "Hunyuan3D-2 model not loaded. Check logs for details.",
+            "error": "TripoSR model not loaded. Check logs for details.",
             "timings": timings,
         }
 
     # Step 3: Generate 3D
     start = time.time()
-    logger.info("Generating 3D model...")
+    logger.info("Generating 3D model with TripoSR...")
 
     try:
+        # Preprocess image for TripoSR
+        if image.mode == "RGBA":
+            # TripoSR expects RGBA with transparent background
+            processed_image = image
+        else:
+            processed_image = image.convert("RGB")
+
         with torch.inference_mode():
-            output = pipe(
-                image,
-                num_inference_steps=50,
-            )
+            # Run TripoSR
+            scene_codes = model([processed_image], device="cuda")
+            meshes = model.extract_mesh(scene_codes, resolution=256)
+            mesh = meshes[0]
 
         timings["generation"] = time.time() - start
         clear_gpu_memory()
 
         # Step 4: Export to GLB
         start = time.time()
+        logger.info("Exporting to GLB...")
 
         with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
             tmp_path = tmp.name
 
-        # Export mesh to GLB
-        if hasattr(output, "meshes") and output.meshes:
-            mesh = output.meshes[0]
-            mesh.export(tmp_path)
-        elif hasattr(output, "mesh"):
-            output.mesh.export(tmp_path)
-        else:
-            # Try trimesh export
-            import trimesh
-            if hasattr(output, "vertices") and hasattr(output, "faces"):
-                mesh = trimesh.Trimesh(vertices=output.vertices, faces=output.faces)
-                mesh.export(tmp_path)
-            else:
-                raise ValueError("Could not extract mesh from model output")
+        # Export mesh
+        mesh.export(tmp_path)
 
         timings["export"] = time.time() - start
 
@@ -184,6 +175,8 @@ def generate_3d_model(
 
         # Cleanup
         os.remove(tmp_path)
+
+        logger.info(f"Generated GLB: {file_size} bytes")
 
         return {
             "success": True,
@@ -197,6 +190,8 @@ def generate_3d_model(
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "error": str(e),
