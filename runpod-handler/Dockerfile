@@ -5,6 +5,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/runpod-volume/models
 ENV CUDA_HOME=/usr/local/cuda
+# Required for CUDA extension compilation without GPU present during build
+ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9 9.0"
 
 # Install Python 3.11 + build tools + OpenGL libs
 RUN apt-get update && apt-get install -y \
