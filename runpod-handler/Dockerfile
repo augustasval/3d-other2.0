@@ -38,6 +38,11 @@ WORKDIR /opt
 RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git
 
 WORKDIR /opt/Hunyuan3D-2
+
+# CRITICAL FIX: Disable super_model upscaling which hangs on CPU
+# See: https://huggingface.co/tencent/Hunyuan3D-2/discussions/6
+RUN sed -i "s/multiviews\[i\] = self.models\['super_model'\](multiviews\[i\])/# multiviews[i] = self.models['super_model'](multiviews[i])  # DISABLED - hangs on CPU/" hy3dgen/texgen/pipelines.py
+
 RUN pip install -r requirements.txt
 RUN pip install -e .
 
