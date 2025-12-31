@@ -93,7 +93,6 @@ def load_shap_e():
         pipe = ShapEImg2ImgPipeline.from_pretrained(
             "openai/shap-e-img2img",
             torch_dtype=torch.float16,
-            variant="fp16",
         )
         pipe = pipe.to("cuda")
 
