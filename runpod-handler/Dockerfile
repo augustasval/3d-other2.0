@@ -17,10 +17,9 @@ RUN pip install --no-cache-dir \
     pygltflib \
     PyMCubes \
     transformers \
-    huggingface_hub
-
-# Install TripoSR from GitHub
-RUN pip install git+https://github.com/VAST-AI-Research/TripoSR.git
+    huggingface_hub \
+    diffusers \
+    accelerate
 
 WORKDIR /app
 

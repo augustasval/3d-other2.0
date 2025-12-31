@@ -71,34 +71,35 @@ def remove_background(image: Image.Image) -> Image.Image:
     return result
 
 
-def load_triposr():
-    """Load TripoSR model for 3D generation."""
+def load_shap_e():
+    """Load Shap-E model for 3D generation."""
     global _models
 
-    if "triposr" not in _models:
-        logger.info("Loading TripoSR model...")
+    if "shap_e" not in _models:
+        logger.info("Loading Shap-E model...")
 
         try:
             import torch
-            from tsr.system import TSR
+            from diffusers import ShapEImg2ImgPipeline
+            from diffusers.utils import export_to_ply
 
-            model = TSR.from_pretrained(
-                "stabilityai/TripoSR",
-                config_name="config.yaml",
-                weight_name="model.ckpt",
+            pipe = ShapEImg2ImgPipeline.from_pretrained(
+                "openai/shap-e-img2img",
+                torch_dtype=torch.float16,
             )
-            model.renderer.set_chunk_size(8192)
-            model.to("cuda")
+            pipe = pipe.to("cuda")
 
-            _models["triposr"] = model
-            logger.info("TripoSR loaded successfully")
+            _models["shap_e"] = pipe
+            _models["export_to_ply"] = export_to_ply
+            logger.info("Shap-E loaded successfully")
 
         except Exception as e:
-            logger.error(f"Failed to load TripoSR: {e}")
-            logger.info("Falling back to placeholder mode")
-            _models["triposr"] = None
+            logger.error(f"Failed to load Shap-E: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            _models["shap_e"] = None
 
-    return _models.get("triposr")
+    return _models.get("shap_e")
 
 
 def generate_3d_model(
@@ -125,34 +126,43 @@ def generate_3d_model(
 
     # Step 2: Load model
     start = time.time()
-    model = load_triposr()
+    pipe = load_shap_e()
     timings["model_loading"] = time.time() - start
 
-    if model is None:
+    if pipe is None:
         logger.warning("Model not available, returning placeholder")
         return {
             "success": False,
-            "error": "TripoSR model not loaded. Check logs for details.",
+            "error": "Shap-E model not loaded. Check logs for details.",
             "timings": timings,
         }
 
     # Step 3: Generate 3D
     start = time.time()
-    logger.info("Generating 3D model with TripoSR...")
+    logger.info("Generating 3D model with Shap-E...")
 
     try:
-        # Preprocess image for TripoSR
+        # Ensure RGB for Shap-E
         if image.mode == "RGBA":
-            # TripoSR expects RGBA with transparent background
-            processed_image = image
+            # Convert RGBA to RGB with white background
+            rgb_image = Image.new("RGB", image.size, (255, 255, 255))
+            rgb_image.paste(image, mask=image.split()[3])
+            processed_image = rgb_image
         else:
             processed_image = image.convert("RGB")
 
+        # Resize if needed (Shap-E works best with 256x256)
+        processed_image = processed_image.resize((256, 256), Image.LANCZOS)
+
         with torch.inference_mode():
-            # Run TripoSR
-            scene_codes = model([processed_image], device="cuda")
-            meshes = model.extract_mesh(scene_codes, resolution=256)
-            mesh = meshes[0]
+            # Generate 3D
+            outputs = pipe(
+                processed_image,
+                guidance_scale=3.0,
+                num_inference_steps=64,
+                frame_size=256,
+                output_type="mesh",
+            )
 
         timings["generation"] = time.time() - start
         clear_gpu_memory()
@@ -161,20 +171,33 @@ def generate_3d_model(
         start = time.time()
         logger.info("Exporting to GLB...")
 
-        with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
-            tmp_path = tmp.name
+        # Get the mesh from output
+        mesh = outputs.images[0]
 
-        # Export mesh
-        mesh.export(tmp_path)
+        with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as tmp:
+            ply_path = tmp.name
+
+        with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
+            glb_path = tmp.name
+
+        # Export to PLY first, then convert to GLB
+        export_to_ply = _models.get("export_to_ply")
+        export_to_ply(mesh, ply_path)
+
+        # Convert PLY to GLB using trimesh
+        import trimesh
+        mesh_data = trimesh.load(ply_path)
+        mesh_data.export(glb_path)
 
         timings["export"] = time.time() - start
 
         # Read and encode the GLB
-        model_base64 = encode_file_to_base64(tmp_path)
-        file_size = os.path.getsize(tmp_path)
+        model_base64 = encode_file_to_base64(glb_path)
+        file_size = os.path.getsize(glb_path)
 
         # Cleanup
-        os.remove(tmp_path)
+        os.remove(ply_path)
+        os.remove(glb_path)
 
         logger.info(f"Generated GLB: {file_size} bytes")
 
