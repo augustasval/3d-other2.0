@@ -1,4 +1,4 @@
-# Minimal 2D-to-3D Handler for RunPod Serverless
+# Minimal 2D-to-3D Handler for RunPod Serverless v2
 # Uses runpod/pytorch base which has most dependencies pre-installed
 
 FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
