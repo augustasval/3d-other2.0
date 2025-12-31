@@ -5,13 +5,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/runpod-volume/models
 
-# Install Python 3.11
+# Install Python 3.11 + OpenGL libs (required by OpenCV/rembg)
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
     python3.11-venv \
     python3-pip \
     git \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default
