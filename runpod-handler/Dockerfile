@@ -1,5 +1,5 @@
-# USE PYTORCH 2.4+ - has torch.xpu which newer diffusers requires
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+# USE PYTORCH 2.8 - required by transformers for CVE-2025-32434 fix
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
