@@ -1,6 +1,6 @@
 """
-RunPod Serverless Handler - Hunyuan3D-2 Shape Generation
-Stage 1: Geometry only (no textures)
+RunPod Serverless Handler - Hunyuan3D-2
+Stage 2: Shape + Texture Generation
 """
 
 import runpod
@@ -17,7 +17,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global model cache
-_pipeline = None
+_shape_pipeline = None
+_paint_pipeline = None
 
 
 def clear_gpu_memory():
@@ -43,13 +44,12 @@ def encode_file_to_base64(file_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def load_pipeline():
-    global _pipeline
-    if _pipeline is not None:
-        return _pipeline
+def load_shape_pipeline():
+    global _shape_pipeline
+    if _shape_pipeline is not None:
+        return _shape_pipeline
 
-    logger.info("Loading Hunyuan3D-2 shape generation pipeline...")
-
+    logger.info("Loading Hunyuan3D-2 shape pipeline...")
     import torch
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
@@ -57,19 +57,33 @@ def load_pipeline():
     if torch.cuda.is_available():
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    _pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+    _shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
         'tencent/Hunyuan3D-2'
     )
+    logger.info("Shape pipeline loaded")
+    return _shape_pipeline
 
-    logger.info("Pipeline loaded successfully")
-    return _pipeline
+
+def load_paint_pipeline():
+    global _paint_pipeline
+    if _paint_pipeline is not None:
+        return _paint_pipeline
+
+    logger.info("Loading Hunyuan3D-2 paint pipeline...")
+    from hy3dgen.texgen import Hunyuan3DPaintPipeline
+
+    _paint_pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+        'tencent/Hunyuan3D-2'
+    )
+    logger.info("Paint pipeline loaded")
+    return _paint_pipeline
 
 
-def generate_3d(image: Image.Image, remove_bg: bool = True) -> dict:
+def generate_3d(image: Image.Image, remove_bg: bool = True, generate_texture: bool = True) -> dict:
     import torch
     timings = {}
 
-    # Background removal (using Hunyuan3D-2's built-in rembg)
+    # Background removal
     start = time.time()
     if remove_bg:
         from hy3dgen.rembg import BackgroundRemover
@@ -78,20 +92,31 @@ def generate_3d(image: Image.Image, remove_bg: bool = True) -> dict:
         image = rembg(image)
     timings["background_removal"] = time.time() - start
 
-    # Load pipeline
+    # Load shape pipeline
     start = time.time()
-    pipeline = load_pipeline()
-    timings["model_loading"] = time.time() - start
+    shape_pipeline = load_shape_pipeline()
+    timings["shape_model_loading"] = time.time() - start
 
     # Generate mesh
     start = time.time()
     logger.info("Generating 3D mesh...")
-
     with torch.inference_mode():
-        mesh = pipeline(image=image)[0]
-
-    timings["generation"] = time.time() - start
+        mesh = shape_pipeline(image=image)[0]
+    timings["shape_generation"] = time.time() - start
     clear_gpu_memory()
+
+    # Texture generation (if requested)
+    if generate_texture:
+        start = time.time()
+        paint_pipeline = load_paint_pipeline()
+        timings["paint_model_loading"] = time.time() - start
+
+        start = time.time()
+        logger.info("Generating textures...")
+        with torch.inference_mode():
+            mesh = paint_pipeline(mesh, image=image)
+        timings["texture_generation"] = time.time() - start
+        clear_gpu_memory()
 
     # Export to GLB
     start = time.time()
@@ -104,14 +129,14 @@ def generate_3d(image: Image.Image, remove_bg: bool = True) -> dict:
     file_size = os.path.getsize(glb_path)
     os.remove(glb_path)
 
-    logger.info(f"Generated GLB: {file_size} bytes")
+    logger.info(f"Generated GLB: {file_size} bytes, textured: {generate_texture}")
 
     return {
         "success": True,
         "model_base64": model_base64,
         "file_size": file_size,
         "format": "glb",
-        "textured": False,  # Stage 1: no textures
+        "textured": generate_texture,
         "timings": timings,
         "total_time": sum(timings.values()),
     }
@@ -126,13 +151,18 @@ def handler(job: dict) -> dict:
             return {"error": "No image provided", "success": False}
 
         remove_bg = job_input.get("remove_background", True)
+        generate_texture = job_input.get("generate_texture", True)
 
         logger.info("Decoding input image...")
         image = decode_base64_image(image_base64)
         logger.info(f"Input: {image.size}, mode: {image.mode}")
 
         start_time = time.time()
-        result = generate_3d(image=image, remove_bg=remove_bg)
+        result = generate_3d(
+            image=image,
+            remove_bg=remove_bg,
+            generate_texture=generate_texture
+        )
         result["execution_time"] = time.time() - start_time
 
         return result
