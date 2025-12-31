@@ -1,4 +1,4 @@
-# Minimal 2D-to-3D Handler for RunPod Serverless v2
+# Minimal 2D-to-3D Handler for RunPod Serverless v3
 # Uses runpod/pytorch base which has most dependencies pre-installed
 
 FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
@@ -7,19 +7,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/runpod-volume/models
 
-# Install dependencies
+# CRITICAL: Pin versions compatible with PyTorch 2.2.0
+# Latest diffusers/accelerate require torch.xpu which doesn't exist in PyTorch 2.2
 RUN pip install --no-cache-dir \
     "numpy<2.0" \
     runpod \
-    onnxruntime-gpu \
     rembg \
     trimesh \
     pygltflib \
     PyMCubes \
-    transformers \
+    "diffusers==0.25.0" \
+    "accelerate==0.25.0" \
+    "transformers==4.36.0" \
     huggingface_hub \
-    diffusers \
-    accelerate
+    safetensors
 
 WORKDIR /app
 
