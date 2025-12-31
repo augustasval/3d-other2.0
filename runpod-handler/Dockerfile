@@ -12,8 +12,7 @@ ENV HF_HOME=/runpod-volume/models
 RUN pip install --no-cache-dir \
     "numpy<2.0" \
     runpod \
-    onnxruntime \
-    rembg \
+    rembg[gpu] \
     trimesh \
     pygltflib \
     PyMCubes \
@@ -21,7 +20,8 @@ RUN pip install --no-cache-dir \
     "accelerate==0.25.0" \
     "transformers==4.36.0" \
     huggingface_hub \
-    safetensors
+    safetensors \
+    scipy
 
 WORKDIR /app
 
