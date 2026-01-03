@@ -36,8 +36,9 @@ WORKDIR /opt
 RUN git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git
 WORKDIR /opt/Hunyuan3D-2.1
 
-# Install all requirements including bpy (now works with Python 3.11)
-RUN pip install --no-cache-dir -r requirements.txt
+# Install requirements (replace bpy==4.0 with available version)
+RUN sed 's/bpy==4.0/bpy>=4.2.0/' requirements.txt > requirements_fixed.txt && \
+    pip install --no-cache-dir -r requirements_fixed.txt
 
 # Pin diffusers to 0.30.0 as specified
 RUN pip install --no-cache-dir diffusers==0.30.0
