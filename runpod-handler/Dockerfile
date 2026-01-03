@@ -1,5 +1,5 @@
-# Hunyuan3D-2 Stage 2: Shape + Texture Generation
-# Using NVIDIA CUDA 12.4 base + PyTorch 2.6.0 for compatibility
+# Hunyuan3D-2.1: Shape + PBR Texture Generation
+# Improved cross-view consistency with 3D-Aware RoPE
 FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -8,50 +8,48 @@ ENV HF_HOME=/runpod-volume/models
 ENV CUDA_HOME=/usr/local/cuda
 ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9 9.0"
 
-# Install Python 3.11 + build tools + OpenGL libs
+# Install Python 3.10 + build tools + OpenGL libs
 RUN apt-get update && apt-get install -y \
-    python3.11 python3.11-dev python3.11-venv python3-pip git \
+    python3.10 python3.10-dev python3.10-venv python3-pip git wget \
     build-essential libgl1-mesa-glx libglib2.0-0 libopengl0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.11 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+# Set Python 3.10 as default (required by 2.1)
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
 RUN python -m pip install --upgrade pip
 
-# Install PyTorch 2.6.0 with CUDA 12.4 (required for transformers security + RunPod compatibility)
-RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+# Install PyTorch 2.5.1 with CUDA 12.4 (as specified by 2.1)
+RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
+    --index-url https://download.pytorch.org/whl/cu124
 
 # Install pybind11
 RUN pip install --no-cache-dir pybind11
 
-# Clone Hunyuan3D-2
+# Clone Hunyuan3D-2.1
 WORKDIR /opt
-RUN git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git
-WORKDIR /opt/Hunyuan3D-2
+RUN git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git
+WORKDIR /opt/Hunyuan3D-2.1
 
-# Install requirements and package
+# Install requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# CRITICAL FIX: Disable super_model upscaler that hangs on CPU
-# The stabilityai/stable-diffusion-x4-upscaler falls back to single-threaded CPU and hangs
-RUN sed -i "s/multiviews\[i\] = self.models\['super_model'\](multiviews\[i\])/# multiviews[i] = self.models['super_model'](multiviews[i])  # DISABLED - hangs on CPU/" hy3dgen/texgen/pipelines.py
+# Pin diffusers to 0.30.0 as specified
+RUN pip install --no-cache-dir diffusers==0.30.0
 
-RUN pip install --no-cache-dir -e .
+# Compile custom_rasterizer (hy3dpaint version)
+WORKDIR /opt/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer
+RUN pip install -e .
 
-# Use diffusers 0.31.0 - newer versions have UNet type issues, older versions have module loading issues
-RUN pip install --no-cache-dir diffusers==0.31.0
+# Compile DifferentiableRenderer
+WORKDIR /opt/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer
+RUN bash compile_mesh_painter.sh
 
-# Compile texture CUDA extensions
-WORKDIR /opt/Hunyuan3D-2/hy3dgen/texgen/custom_rasterizer
-RUN python setup.py install
-
-# Compile mesh_processor (CRITICAL for GPU texture inpainting - without this, falls back to slow CPU)
-WORKDIR /opt/Hunyuan3D-2/hy3dgen/texgen/differentiable_renderer
-RUN python setup.py install
-# Also build in-place for local imports
-RUN python setup.py build_ext --inplace
+# Download RealESRGAN upsampler model
+WORKDIR /opt/Hunyuan3D-2.1
+RUN wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth \
+    -P hy3dpaint/ckpt
 
 # Install RunPod
 RUN pip install --no-cache-dir runpod

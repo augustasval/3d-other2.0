@@ -1,7 +1,13 @@
 """
-RunPod Serverless Handler - Hunyuan3D-2
-Stage 2: Shape + Texture Generation
+RunPod Serverless Handler - Hunyuan3D-2.1
+Shape + PBR Texture Generation with improved cross-view consistency
 """
+
+import sys
+# Add Hunyuan3D-2.1 modules to path
+sys.path.insert(0, '/opt/Hunyuan3D-2.1')
+sys.path.insert(0, '/opt/Hunyuan3D-2.1/hy3dshape')
+sys.path.insert(0, '/opt/Hunyuan3D-2.1/hy3dpaint')
 
 import runpod
 import base64
@@ -60,26 +66,22 @@ def encode_file_to_base64(file_path: str) -> str:
 def check_extensions():
     """Check if all required C++ extensions are available"""
     logger.info("=" * 50)
-    logger.info("CHECKING C++ EXTENSIONS")
+    logger.info("CHECKING C++ EXTENSIONS (Hunyuan3D-2.1)")
     logger.info("=" * 50)
-
-    # Check mesh_processor
-    try:
-        from hy3dgen.texgen.differentiable_renderer import mesh_processor
-        logger.info("✓ mesh_processor: LOADED")
-        if hasattr(mesh_processor, 'meshVerticeInpaint'):
-            logger.info("  ✓ meshVerticeInpaint function: AVAILABLE")
-        else:
-            logger.warning("  ✗ meshVerticeInpaint function: NOT FOUND")
-    except ImportError as e:
-        logger.error(f"✗ mesh_processor: FAILED - {e}")
 
     # Check custom_rasterizer
     try:
-        from hy3dgen.texgen import custom_rasterizer
+        from hy3dpaint import custom_rasterizer
         logger.info("✓ custom_rasterizer: LOADED")
     except ImportError as e:
         logger.error(f"✗ custom_rasterizer: FAILED - {e}")
+
+    # Check mesh_processor from DifferentiableRenderer
+    try:
+        from hy3dpaint.DifferentiableRenderer import mesh_processor
+        logger.info("✓ mesh_processor: LOADED")
+    except ImportError as e:
+        logger.warning(f"✗ mesh_processor: {e}")
 
     logger.info("=" * 50)
 
@@ -108,9 +110,9 @@ def load_shape_pipeline():
         logger.info("Shape pipeline already loaded (cached)")
         return _shape_pipeline
 
-    logger.info("Loading Hunyuan3D-2 shape pipeline...")
+    logger.info("Loading Hunyuan3D-2.1 shape pipeline...")
     import torch
-    from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+    from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
     logger.info(f"PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
@@ -120,7 +122,7 @@ def load_shape_pipeline():
     log_gpu_status("before shape pipeline load")
 
     _shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-        'tencent/Hunyuan3D-2'
+        'tencent/Hunyuan3D-2.1'
     )
 
     log_gpu_status("after shape pipeline load")
@@ -134,27 +136,18 @@ def load_paint_pipeline():
         logger.info("Paint pipeline already loaded (cached)")
         return _paint_pipeline
 
-    logger.info("Loading Hunyuan3D-2 paint pipeline...")
-    from hy3dgen.texgen import Hunyuan3DPaintPipeline
+    logger.info("Loading Hunyuan3D-2.1 paint pipeline...")
+    from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
     log_gpu_status("before paint pipeline load")
 
-    _paint_pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-        'tencent/Hunyuan3D-2',
-        subfolder='hunyuan3d-paint-v2-0'  # Use non-turbo (has VAE safetensors)
-    )
+    # Configure paint pipeline
+    config = Hunyuan3DPaintConfig()
+    # Use more views for better coverage
+    if hasattr(config, 'max_num_view'):
+        config.max_num_view = 6
 
-    # Debug: Log pipeline configuration
-    if hasattr(_paint_pipeline, 'config'):
-        config = _paint_pipeline.config
-        logger.info(f"Paint pipeline config:")
-        logger.info(f"  device: {getattr(config, 'device', 'unknown')}")
-        logger.info(f"  render_size: {getattr(config, 'render_size', 'unknown')}")
-        logger.info(f"  texture_size: {getattr(config, 'texture_size', 'unknown')}")
-
-    # Check models loaded
-    if hasattr(_paint_pipeline, 'models'):
-        logger.info(f"Paint pipeline models: {list(_paint_pipeline.models.keys())}")
+    _paint_pipeline = Hunyuan3DPaintPipeline(config)
 
     log_gpu_status("after paint pipeline load")
     logger.info("Paint pipeline loaded successfully")
@@ -166,139 +159,136 @@ def generate_3d(image: Image.Image, remove_bg: bool = True, generate_texture: bo
     timings = {}
 
     logger.info("=" * 50)
-    logger.info("STARTING 3D GENERATION")
+    logger.info("STARTING 3D GENERATION (Hunyuan3D-2.1)")
     logger.info("=" * 50)
     logger.info(f"Options: remove_bg={remove_bg}, generate_texture={generate_texture}")
 
-    # Background removal
-    start = time.time()
-    if remove_bg:
-        from hy3dgen.rembg import BackgroundRemover
-        logger.info("Removing background...")
-        rembg = BackgroundRemover()
-        image = rembg(image)
-        logger.info(f"Background removed, image size: {image.size}")
-    timings["background_removal"] = time.time() - start
-    logger.info(f"Background removal took: {timings['background_removal']:.2f}s")
+    # Create temp directory for file-based API
+    temp_dir = tempfile.mkdtemp()
+    temp_image_path = os.path.join(temp_dir, "input.png")
+    temp_mesh_path = os.path.join(temp_dir, "mesh.glb")
+    temp_output_path = os.path.join(temp_dir, "textured.glb")
 
-    # Load shape pipeline
-    start = time.time()
-    shape_pipeline = load_shape_pipeline()
-    timings["shape_model_loading"] = time.time() - start
-    logger.info(f"Shape model loading took: {timings['shape_model_loading']:.2f}s")
-
-    # Generate mesh
-    start = time.time()
-    logger.info("Generating 3D mesh...")
-    log_gpu_status("before shape generation")
-    with torch.inference_mode():
-        mesh = shape_pipeline(image=image)[0]
-    log_gpu_status("after shape generation")
-    timings["shape_generation"] = time.time() - start
-    logger.info(f"Shape generation took: {timings['shape_generation']:.2f}s")
-
-    logger.info(f"Mesh info: vertices={len(mesh.vertices) if hasattr(mesh, 'vertices') else 'unknown'}")
-    clear_gpu_memory()
-    log_gpu_status("after shape GPU cleanup")
-
-    # Texture generation (if requested)
-    if generate_texture:
-        logger.info("=" * 50)
-        logger.info("STARTING TEXTURE GENERATION")
-        logger.info("=" * 50)
-
-        # Simplify mesh if too complex (>100k vertices causes slow UV wrapping)
-        vertex_count = len(mesh.vertices) if hasattr(mesh, 'vertices') else 0
-        if vertex_count > 100000:
-            logger.info(f"Mesh has {vertex_count} vertices - simplifying to speed up texture generation...")
-            start_simplify = time.time()
-            try:
-                import pymeshlab
-                # Save mesh temporarily
-                temp_mesh_path = tempfile.mktemp(suffix=".ply")
-                mesh.export(temp_mesh_path)
-
-                # Use pymeshlab for robust decimation
-                ms = pymeshlab.MeshSet()
-                ms.load_new_mesh(temp_mesh_path)
-
-                # Simplify to ~50k faces using quadric edge collapse
-                target_faces = 50000
-                ms.meshing_decimation_quadric_edge_collapse(targetfacenum=target_faces)
-
-                # Save simplified mesh
-                temp_simplified_path = tempfile.mktemp(suffix=".ply")
-                ms.save_current_mesh(temp_simplified_path)
-
-                # Reload as trimesh
-                import trimesh
-                mesh = trimesh.load(temp_simplified_path)
-
-                # Cleanup
-                os.remove(temp_mesh_path)
-                os.remove(temp_simplified_path)
-
-                new_vertex_count = len(mesh.vertices) if hasattr(mesh, 'vertices') else 0
-                logger.info(f"Mesh simplified: {vertex_count} -> {new_vertex_count} vertices in {time.time() - start_simplify:.2f}s")
-            except Exception as e:
-                logger.warning(f"Mesh simplification failed: {e}, continuing with original mesh")
-
+    try:
+        # Background removal
         start = time.time()
-        paint_pipeline = load_paint_pipeline()
-        timings["paint_model_loading"] = time.time() - start
-        logger.info(f"Paint model loading took: {timings['paint_model_loading']:.2f}s")
+        if remove_bg:
+            from hy3dshape.rembg import BackgroundRemover
+            logger.info("Removing background...")
+            rembg = BackgroundRemover()
+            image = rembg(image)
+            logger.info(f"Background removed, image size: {image.size}")
+        timings["background_removal"] = time.time() - start
+        logger.info(f"Background removal took: {timings['background_removal']:.2f}s")
 
+        # Save image for texture pipeline (needs file path)
+        image.save(temp_image_path)
+
+        # Load shape pipeline
         start = time.time()
-        logger.info("Generating textures... (this may take a while)")
-        log_gpu_status("before texture generation")
+        shape_pipeline = load_shape_pipeline()
+        timings["shape_model_loading"] = time.time() - start
+        logger.info(f"Shape model loading took: {timings['shape_model_loading']:.2f}s")
 
+        # Generate mesh
+        start = time.time()
+        logger.info("Generating 3D mesh...")
+        log_gpu_status("before shape generation")
         with torch.inference_mode():
-            logger.info("Calling paint_pipeline...")
-            mesh = paint_pipeline(mesh, image=image)
-            logger.info("paint_pipeline returned")
+            mesh = shape_pipeline(image=image)[0]
+        log_gpu_status("after shape generation")
+        timings["shape_generation"] = time.time() - start
+        logger.info(f"Shape generation took: {timings['shape_generation']:.2f}s")
 
-        log_gpu_status("after texture generation")
-        timings["texture_generation"] = time.time() - start
-        logger.info(f"Texture generation took: {timings['texture_generation']:.2f}s")
+        logger.info(f"Mesh info: vertices={len(mesh.vertices) if hasattr(mesh, 'vertices') else 'unknown'}")
+
+        # Export mesh for texture pipeline
+        mesh.export(temp_mesh_path)
+        logger.info(f"Mesh exported to {temp_mesh_path}")
+
         clear_gpu_memory()
-        log_gpu_status("after texture GPU cleanup")
+        log_gpu_status("after shape GPU cleanup")
 
-    # Export to GLB
-    logger.info("Exporting to GLB...")
-    start = time.time()
-    glb_path = tempfile.mktemp(suffix=".glb")
-    mesh.export(glb_path)
-    timings["export"] = time.time() - start
-    logger.info(f"Export took: {timings['export']:.2f}s")
+        # Texture generation (if requested)
+        final_glb_path = temp_mesh_path  # Default to untextured mesh
 
-    # Read and encode
-    model_base64 = encode_file_to_base64(glb_path)
-    file_size = os.path.getsize(glb_path)
-    os.remove(glb_path)
+        if generate_texture:
+            logger.info("=" * 50)
+            logger.info("STARTING TEXTURE GENERATION (PBR)")
+            logger.info("=" * 50)
 
-    logger.info("=" * 50)
-    logger.info("GENERATION COMPLETE")
-    logger.info("=" * 50)
-    logger.info(f"Generated GLB: {file_size} bytes, textured: {generate_texture}")
-    logger.info(f"Total time: {sum(timings.values()):.2f}s")
-    for key, val in timings.items():
-        logger.info(f"  {key}: {val:.2f}s")
+            start = time.time()
+            paint_pipeline = load_paint_pipeline()
+            timings["paint_model_loading"] = time.time() - start
+            logger.info(f"Paint model loading took: {timings['paint_model_loading']:.2f}s")
 
-    return {
-        "success": True,
-        "model_base64": model_base64,
-        "file_size": file_size,
-        "format": "glb",
-        "textured": generate_texture,
-        "timings": timings,
-        "total_time": sum(timings.values()),
-    }
+            start = time.time()
+            logger.info("Generating PBR textures... (this may take a while)")
+            log_gpu_status("before texture generation")
+
+            with torch.inference_mode():
+                logger.info("Calling paint_pipeline...")
+                # 2.1 API: takes file paths, not objects
+                result_path = paint_pipeline(
+                    mesh_path=temp_mesh_path,
+                    image_path=temp_image_path,
+                    output_mesh_path=temp_output_path,
+                    use_remesh=True,
+                    save_glb=True
+                )
+                logger.info(f"paint_pipeline returned: {result_path}")
+
+                # Use the output path
+                if result_path and os.path.exists(result_path):
+                    final_glb_path = result_path
+                elif os.path.exists(temp_output_path):
+                    final_glb_path = temp_output_path
+                else:
+                    logger.warning("Texture output not found, using untextured mesh")
+
+            log_gpu_status("after texture generation")
+            timings["texture_generation"] = time.time() - start
+            logger.info(f"Texture generation took: {timings['texture_generation']:.2f}s")
+            clear_gpu_memory()
+            log_gpu_status("after texture GPU cleanup")
+
+        # Read and encode final GLB
+        logger.info(f"Reading final GLB from: {final_glb_path}")
+        model_base64 = encode_file_to_base64(final_glb_path)
+        file_size = os.path.getsize(final_glb_path)
+
+        logger.info("=" * 50)
+        logger.info("GENERATION COMPLETE")
+        logger.info("=" * 50)
+        logger.info(f"Generated GLB: {file_size} bytes, textured: {generate_texture}")
+        logger.info(f"Total time: {sum(timings.values()):.2f}s")
+        for key, val in timings.items():
+            logger.info(f"  {key}: {val:.2f}s")
+
+        return {
+            "success": True,
+            "model_base64": model_base64,
+            "file_size": file_size,
+            "format": "glb",
+            "textured": generate_texture,
+            "version": "2.1",
+            "timings": timings,
+            "total_time": sum(timings.values()),
+        }
+
+    finally:
+        # Cleanup temp files
+        import shutil
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp dir: {e}")
 
 
 def handler(job: dict) -> dict:
     try:
         logger.info("=" * 50)
-        logger.info("NEW JOB RECEIVED")
+        logger.info("NEW JOB RECEIVED (Hunyuan3D-2.1)")
         logger.info("=" * 50)
 
         # Run checks on first job
