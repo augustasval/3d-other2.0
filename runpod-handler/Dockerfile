@@ -32,8 +32,9 @@ WORKDIR /opt
 RUN git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git
 WORKDIR /opt/Hunyuan3D-2.1
 
-# Install requirements
-RUN pip install --no-cache-dir -r requirements.txt
+# Install requirements (filter out bpy which requires Python 3.11+)
+RUN grep -v "^bpy" requirements.txt > requirements_filtered.txt && \
+    pip install --no-cache-dir -r requirements_filtered.txt
 
 # Pin diffusers to 0.30.0 as specified
 RUN pip install --no-cache-dir diffusers==0.30.0
