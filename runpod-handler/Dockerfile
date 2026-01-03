@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir diffusers==0.30.0
 
 # Compile custom_rasterizer (hy3dpaint version)
 WORKDIR /opt/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer
-RUN pip install -e .
+RUN python setup.py install
 
 # Compile DifferentiableRenderer
 WORKDIR /opt/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer
